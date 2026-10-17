@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="BuildingCopilot.csproj" />
+  <Project Path="src/BuildingCopilot.Domain/BuildingCopilot.Domain.csproj" />
+  <Project Path="src/BuildingCopilot.Application/BuildingCopilot.Application.csproj" />
+  <Project Path="src/BuildingCopilot.Infrastructure/BuildingCopilot.Infrastructure.csproj" />
+  <Project Path="tests/BuildingCopilot.UnitTests/BuildingCopilot.UnitTests.csproj" />
+  <Project Path="tests/BuildingCopilot.IntegrationTests/BuildingCopilot.IntegrationTests.csproj" />
+</Solution>

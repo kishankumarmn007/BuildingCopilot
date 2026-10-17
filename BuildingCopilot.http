@@ -1,0 +1,80 @@
+@BuildingCopilot_HostAddress = http://localhost:5178
+
+### Check API availability
+GET {{BuildingCopilot_HostAddress}}/
+
+### Get telemetry for a known room
+GET {{BuildingCopilot_HostAddress}}/api/rooms/ROOM-101/telemetry
+
+### Get telemetry for an unknown room
+GET {{BuildingCopilot_HostAddress}}/api/rooms/ROOM-999/telemetry
+
+### Ask the chat assistant
+POST {{BuildingCopilot_HostAddress}}/api/chat
+Content-Type: application/json
+
+{
+	"question": "Why could a room remain hot when HVAC is running?"
+}
+
+### Ask using manual context
+POST {{BuildingCopilot_HostAddress}}/api/rag/ask
+Content-Type: application/json
+
+{
+	"question": "What should I inspect if a room remains hot?"
+}
+
+### Diagnose a room using telemetry and manual context
+POST {{BuildingCopilot_HostAddress}}/api/rooms/ROOM-101/diagnosis
+Content-Type: application/json
+
+{
+	"question": "Why could this room remain hot when HVAC is running?"
+}
+
+### MCP initialize (stateless Streamable HTTP)
+POST {{BuildingCopilot_HostAddress}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+MCP-Protocol-Version: 2025-11-25
+
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "initialize",
+	"params": {
+		"protocolVersion": "2025-11-25",
+		"capabilities": {},
+		"clientInfo": { "name": "vscode-http-client", "version": "1.0.0" }
+	}
+}
+
+### MCP list tools
+POST {{BuildingCopilot_HostAddress}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+MCP-Protocol-Version: 2025-11-25
+
+{
+	"jsonrpc": "2.0",
+	"id": 2,
+	"method": "tools/list",
+	"params": {}
+}
+
+### MCP call telemetry tool
+POST {{BuildingCopilot_HostAddress}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+MCP-Protocol-Version: 2025-11-25
+
+{
+	"jsonrpc": "2.0",
+	"id": 3,
+	"method": "tools/call",
+	"params": {
+		"name": "get_room_telemetry",
+		"arguments": { "roomId": "ROOM-101" }
+	}
+}

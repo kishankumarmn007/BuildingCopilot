@@ -1,0 +1,85 @@
+{
+  "info": {
+    "_postman_id": "8b51213e-c1b6-4ad1-b640-08bec4ab4144",
+    "name": "Building Copilot AI Regression",
+    "description": "API regressions plus deterministic citation/source checks and an optional local Ollama judge for grounding, faithfulness, relevance, completeness, and uncertainty handling.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "apiBaseUrl", "value": "http://localhost:5178" },
+    { "key": "ollamaBaseUrl", "value": "http://localhost:11434" },
+    { "key": "judgeModel", "value": "llama3.2:3b" },
+    { "key": "minimumAiScore", "value": "3" }
+  ],
+  "item": [
+    {
+      "name": "API regression",
+      "item": [
+        {
+          "name": "Health",
+          "request": { "method": "GET", "header": [], "url": "{{apiBaseUrl}}/" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('API is available', function () { pm.response.to.have.status(200); });"] } }]
+        },
+        {
+          "name": "Known room telemetry",
+          "request": { "method": "GET", "header": [], "url": "{{apiBaseUrl}}/api/rooms/ROOM-101/telemetry" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json();", "pm.test('Telemetry has expected status and values', function () { pm.response.to.have.status(200); pm.expect(body.roomId).to.eql('ROOM-101'); pm.expect(body.temperatureC).to.be.a('number'); pm.expect(body.hvacRunning).to.be.a('boolean'); });"] } }]
+        },
+        {
+          "name": "Unknown room is not found",
+          "request": { "method": "GET", "header": [], "url": "{{apiBaseUrl}}/api/rooms/ROOM-999/telemetry" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Unknown room returns a problem response', function () { pm.response.to.have.status(404); pm.expect(pm.response.json().title).to.include('Room not found'); });"] } }]
+        },
+        {
+          "name": "Empty chat question is rejected",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"question\":\" \"}", "options": { "raw": { "language": "json" } } }, "url": "{{apiBaseUrl}}/api/chat" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Invalid question returns 400 Problem Details', function () { pm.response.to.have.status(400); pm.expect(pm.response.json().title).to.include('Question is required'); });"] } }]
+        }
+      ]
+    },
+    {
+      "name": "Grounding and response quality",
+      "item": [
+        {
+          "name": "RAG grounded HVAC answer",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"question\":\"Why could a room remain hot when HVAC is running?\"}", "options": { "raw": { "language": "json" } } }, "url": "{{apiBaseUrl}}/api/rag/ask" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "const body = pm.response.json();",
+            "const answer = body.answer || '';",
+            "const sources = body.sources || [];",
+            "const citationIds = sources.map(source => source.citationId);",
+            "const citationsInAnswer = answer.match(/\\[S\\d+\\]/g) || [];",
+            "pm.test('RAG returns answer and evidence', function () { pm.response.to.have.status(200); pm.expect(answer.trim()).not.to.eql(''); pm.expect(sources.length).to.be.above(0); });",
+            "pm.test('Every answer citation resolves to a returned source', function () { pm.expect(citationsInAnswer.length, 'at least one explicit citation').to.be.above(0); citationsInAnswer.forEach(id => pm.expect(citationIds).to.include(id.slice(1, -1))); });",
+            "const prompt = `Evaluate this answer using only the supplied evidence. Return JSON with numeric scores 0-5 for grounding, faithfulness, relevance, completeness, and uncertaintyHandling, plus arrays unsupportedClaims and missingCitations. Question: Why could a room remain hot when HVAC is running?\\nAnswer: ${answer}\\nEvidence: ${JSON.stringify(sources)}`;",
+            "pm.sendRequest({ url: pm.collectionVariables.get('ollamaBaseUrl') + '/api/generate', method: 'POST', header: { 'Content-Type': 'application/json' }, body: { mode: 'raw', raw: JSON.stringify({ model: pm.collectionVariables.get('judgeModel'), stream: false, format: 'json', options: { temperature: 0 }, prompt }) } }, function (error, response) {",
+            "  pm.test('Ollama quality judge returns semantic scores', function () {",
+            "    pm.expect(error, 'judge request').to.equal(null); pm.expect(response.code).to.eql(200);",
+            "    const evaluation = JSON.parse(response.json().response); const minimum = Number(pm.collectionVariables.get('minimumAiScore') || 3);",
+            "    ['grounding', 'faithfulness', 'relevance', 'completeness', 'uncertaintyHandling'].forEach(key => pm.expect(evaluation[key], key).to.be.at.least(minimum));",
+            "    pm.expect(evaluation.unsupportedClaims || [], 'unsupported claims').to.have.length(0); pm.expect(evaluation.missingCitations || [], 'missing citations').to.have.length(0);",
+            "  });",
+            "});"
+          ] } }]
+        },
+        {
+          "name": "Unanswerable question is not invented",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"question\":\"What color are the curtains in Room 101?\"}", "options": { "raw": { "language": "json" } } }, "url": "{{apiBaseUrl}}/api/rag/ask" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "const body = pm.response.json(); const answer = body.answer || ''; const sources = body.sources || []; const normalized = answer.toLowerCase();",
+            "pm.test('Unanswerable question does not receive an invented common color', function () { pm.response.to.have.status(200); pm.expect(answer.trim()).not.to.eql(''); pm.expect(sources.length).to.be.above(0); pm.expect(normalized).not.to.match(/\\b(red|blue|green|yellow|white|black|gray|grey|beige|brown|purple|orange|pink)\\b/); });",
+            "const prompt = `Evaluate only uncertainty handling. Gold fact: none of the supplied sources specifies any curtain color. Score 5 only if the answer explicitly says the color is not provided or cannot be determined and does not name a color. Return JSON only with one integer field: {\\\"uncertaintyHandling\\\":0}. Question: What color are the curtains in Room 101?\\nAnswer: ${answer}\\nSources: ${JSON.stringify(sources)}`;",
+            "pm.sendRequest({ url: pm.collectionVariables.get('ollamaBaseUrl') + '/api/generate', method: 'POST', header: { 'Content-Type': 'application/json' }, body: { mode: 'raw', raw: JSON.stringify({ model: pm.collectionVariables.get('judgeModel'), stream: false, format: 'json', options: { temperature: 0 }, prompt }) } }, function (error, response) {",
+            "  pm.test('Judge confirms uncertainty is handled appropriately', function () { pm.expect(error).to.equal(null); pm.expect(response.code).to.eql(200); const score = JSON.parse(response.json().response); const minimum = Number(pm.collectionVariables.get('minimumAiScore') || 3); pm.expect(score.uncertaintyHandling).to.be.at.least(minimum); });",
+            "});"
+          ] } }]
+        },
+        {
+          "name": "Room diagnosis includes evidence and telemetry",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"question\":\"Why could this room remain hot if HVAC is running?\"}", "options": { "raw": { "language": "json" } } }, "url": "{{apiBaseUrl}}/api/rooms/ROOM-101/diagnosis" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json(); pm.test('Diagnosis combines observed room telemetry and cited RAG analysis', function () { pm.response.to.have.status(200); pm.expect(body.room.roomId).to.eql('ROOM-101'); pm.expect(body.analysis.answer).to.be.a('string').and.not.empty; pm.expect(body.analysis.sources.length).to.be.above(0); });"] } }]
+        }
+      ]
+    }
+  ]
+}
