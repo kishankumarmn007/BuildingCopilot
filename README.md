@@ -89,3 +89,17 @@ npm run lint
 ```
 
 API and MCP requests for health, telemetry, chat, RAG, room diagnosis, and MCP tool calls are in `BuildingCopilot.http`.
+
+For your Docker Desktop setup, these are the main URLs:
+
+What it’s for	URL
+Building Copilot app	http://localhost:3000
+Keycloak admin console	http://localhost:8081/admin
+Keycloak sign-in realm	http://localhost:8081/realms/building-copilot
+Qdrant dashboard	http://localhost:6333/dashboard
+
+The app sends API requests through its web container; the API doesn’t have a host port published in the Docker setup, so you don’t need to open a separate API URL. Ollama and PostgreSQL are also available only to the other Docker services—not directly in your browser.
+
+If you run the app in local development mode instead of Docker, the URLs differ: the API is http://localhost:5178, the frontend is http://127.0.0.1:5173, and MCP is http://localhost:5178/mcp. Those local-development URLs are described in the README.
+
+For everyday use, start with http://localhost:3000.

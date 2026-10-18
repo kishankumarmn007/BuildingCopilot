@@ -750,3 +750,47 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.auth-screen {
+  display: grid;
+  width: 100%;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  background-color: var(--canvas);
+  background-image: radial-gradient(rgba(31, 62, 49, 0.045) 0.7px, transparent 0.7px);
+  background-size: 14px 14px;
+}
+
+.auth-panel {
+  width: min(420px, 100%);
+  padding: 34px;
+  text-align: center;
+  background: rgba(255, 255, 252, 0.95);
+  border: 1px solid #e2e7df;
+  border-radius: 16px;
+  box-shadow: 0 14px 42px rgba(35, 55, 40, 0.09);
+}
+
+.auth-panel .welcome-emblem { margin-top: 0; }
+.auth-panel h1 { color: #22392e; font-family: var(--font-display); font-size: 26px; font-weight: 650; }
+.auth-panel .welcome-copy { margin-bottom: 22px; }
+
+.auth-button {
+  width: 100%;
+  padding: 12px 18px;
+  color: #f9faf7;
+  font-weight: 650;
+  background: #28533d;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.auth-button:hover { background: #1d422f; }
+
+.auth-error {
+  margin: 0 0 16px;
+  color: #934f42;
+  font-size: 12px;
+}

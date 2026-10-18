@@ -14,6 +14,7 @@ import {
   Wind,
   X,
 } from 'lucide-react'
+import { useAuth } from './auth/useAuth.js'
 import './App.css'
 
 const STORAGE_KEY = 'building-copilot-conversations'
@@ -43,6 +44,7 @@ function readConversations() {
 }
 
 function App() {
+  const { user, isReady, error: authError, signIn, signOut, getAccessToken } = useAuth()
   const [conversations, setConversations] = useState(readConversations)
   const [activeId, setActiveId] = useState(() => conversations[0].id)
   const [draft, setDraft] = useState('')
@@ -55,6 +57,11 @@ function App() {
 
   const activeConversation = conversations.find((item) => item.id === activeId)
   const messages = activeConversation?.messages ?? []
+  const userName = user?.profile.name
+    || user?.profile.preferred_username
+    || user?.profile.email
+    || 'Building Copilot user'
+  const userInitials = userName.split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations))
@@ -105,13 +112,23 @@ function App() {
     }))
 
     try {
+      const accessToken = await getAccessToken()
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({ question: conversationPrompt }),
       })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Your sign-in has expired. Sign out and sign in again.')
+        }
+        if (response.status === 403) {
+          throw new Error('Your account is not authorized to use the API. Sign out and sign in again; if this continues, check that your Keycloak user has the building-user role.')
+        }
         throw new Error(payload.detail || payload.message || `Request failed (${response.status})`)
       }
 
@@ -123,7 +140,7 @@ function App() {
         : conversation))
     } catch (error) {
       setConversations((current) => current.map((conversation) => conversation.id === conversationId
-        ? { ...conversation, messages: [...conversation.messages, { id: crypto.randomUUID(), role: 'error', content: `${error.message} Make sure the API is running at http://localhost:5178.` }], updatedAt: Date.now() }
+        ? { ...conversation, messages: [...conversation.messages, { id: crypto.randomUUID(), role: 'error', content: error.message }], updatedAt: Date.now() }
         : conversation))
     } finally {
       setIsSending(false)
@@ -146,6 +163,25 @@ function App() {
     await navigator.clipboard.writeText(message.content)
     setCopiedId(message.id)
     window.setTimeout(() => setCopiedId(null), 1400)
+  }
+
+  if (!isReady) {
+    return <main className="auth-screen" role="status">Connecting to secure sign-in…</main>
+  }
+
+  if (!user) {
+    return (
+      <main className="auth-screen">
+        <section className="auth-panel">
+          <div className="welcome-emblem"><Building2 size={22} /></div>
+          <p className="eyebrow">BUILDING COPILOT</p>
+          <h1>Sign in to continue</h1>
+          <p className="welcome-copy">Use your organization account to access building operations and maintenance guidance.</p>
+          {authError && <p className="auth-error" role="alert">{authError}</p>}
+          <button className="auth-button" onClick={signIn}>Sign in with Keycloak</button>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -182,9 +218,9 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="user-avatar">KK</div>
-          <div className="user-copy"><strong>Kishan Kumar</strong><span>Facilities team</span></div>
-          <button className="icon-button account-menu" aria-label="Account options"><ChevronDown size={16} /></button>
+          <div className="user-avatar">{userInitials}</div>
+          <div className="user-copy"><strong>{userName}</strong><span>Signed in</span></div>
+          <button className="icon-button account-menu" aria-label="Sign out" title="Sign out" onClick={signOut}><ChevronDown size={16} /></button>
         </div>
       </aside>
 

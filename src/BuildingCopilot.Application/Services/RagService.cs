@@ -3,13 +3,24 @@ using BuildingCopilot.Application.Models;
 
 namespace BuildingCopilot.Application.Services;
 
-public sealed class RagService(IOllamaClient ollamaClient) : IRagService
+public sealed class RagService(
+    IOllamaClient ollamaClient,
+    IVectorStore vectorStore) : IRagService
 {
-    private static readonly string[] ManualChunks =
+    private static readonly KnowledgeDocument[] SeedDocuments =
     [
-        "If a conference room temperature remains above 28 C, inspect the air filter, verify the cooling setpoint, and check the HVAC fault status.",
-        "If HVAC cooling is running but the room remains hot, inspect airflow and verify whether the cooling setpoint is appropriate for the room.",
-        "For sensor-related issues, verify the temperature sensor reading against a calibrated reference and check the sensor connection."
+        new(
+            Guid.Parse("a6a7a979-4eb1-4ff0-a40a-0d0d255e4101"),
+            "hvac-maintenance-manual",
+            "If a conference room temperature remains above 28 C, inspect the air filter, verify the cooling setpoint, and check the HVAC fault status."),
+        new(
+            Guid.Parse("a6a7a979-4eb1-4ff0-a40a-0d0d255e4102"),
+            "hvac-maintenance-manual",
+            "If HVAC cooling is running but the room remains hot, inspect airflow and verify whether the cooling setpoint is appropriate for the room."),
+        new(
+            Guid.Parse("a6a7a979-4eb1-4ff0-a40a-0d0d255e4103"),
+            "sensor-maintenance-manual",
+            "For sensor-related issues, verify the temperature sensor reading against a calibrated reference and check the sensor connection.")
     ];
 
     private const string SystemPrompt = """
@@ -28,20 +39,32 @@ public sealed class RagService(IOllamaClient ollamaClient) : IRagService
         var questionVector = await ollamaClient.CreateEmbeddingAsync(
             question,
             cancellationToken);
-        var scoredChunks = new List<(string Text, double Score)>(ManualChunks.Length);
+        await vectorStore.EnsureCollectionAsync(questionVector.Length, cancellationToken);
 
-        foreach (var chunk in ManualChunks)
+        if (!await vectorStore.HasDocumentsAsync(cancellationToken))
         {
-            var vector = await ollamaClient.CreateEmbeddingAsync(
-                chunk,
-                cancellationToken);
-            scoredChunks.Add((chunk, CosineSimilarity(questionVector, vector)));
+            var seedPoints = new List<KnowledgePoint>(SeedDocuments.Length);
+            foreach (var document in SeedDocuments)
+            {
+                var vector = await ollamaClient.CreateEmbeddingAsync(
+                    document.Text,
+                    cancellationToken);
+                seedPoints.Add(new KnowledgePoint(document, vector));
+            }
+
+            await vectorStore.UpsertAsync(seedPoints, cancellationToken);
         }
 
-        var bestChunks = scoredChunks
-            .OrderByDescending(chunk => chunk.Score)
-            .Take(2)
-            .Select((chunk, index) => (chunk.Text, chunk.Score, CitationId: $"S{index + 1}"))
+        var bestChunks = (await vectorStore.SearchAsync(
+                questionVector,
+                limit: 3,
+                cancellationToken))
+            .OrderByDescending(match => match.Score)
+            .Select((match, index) => (
+                match.Document.Text,
+                match.Document.Source,
+                match.Score,
+                CitationId: $"S{index + 1}"))
             .ToArray();
         var context = string.Join(
             "\n\n",
@@ -72,6 +95,7 @@ public sealed class RagService(IOllamaClient ollamaClient) : IRagService
         var sources = bestChunks
             .Select(chunk => new RagSource(
                 chunk.CitationId,
+                chunk.Source,
                 chunk.Text,
                 Math.Round(chunk.Score, 3)))
             .ToArray();

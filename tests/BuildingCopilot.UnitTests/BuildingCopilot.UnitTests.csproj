@@ -16,6 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingCopilot.Application\BuildingCopilot.Application.csproj" />
+    <ProjectReference Include="..\..\src\BuildingCopilot.Infrastructure\BuildingCopilot.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

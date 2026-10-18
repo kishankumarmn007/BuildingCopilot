@@ -6,5 +6,6 @@ public sealed record RagResponse(
 
 public sealed record RagSource(
     string CitationId,
+    string Source,
     string Text,
     double Similarity);

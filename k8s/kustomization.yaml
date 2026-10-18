@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: building-copilot
+resources:
+  - namespace.yaml
+  - building-copilot.yaml
+configMapGenerator:
+  - name: keycloak-realm
+    files:
+      - building-copilot-realm.json=../deploy/keycloak/realm.json
+generatorOptions:
+  disableNameSuffixHash: false
+secretGenerator:
+  - name: building-copilot-secrets
+    envs:
+      - ../.env

@@ -1,0 +1,429 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: building-copilot-config
+data:
+  Ollama__BaseUrl: http://ollama:11434/
+  Ollama__ChatModel: llama3.2:3b
+  Ollama__EmbeddingModel: nomic-embed-text
+  Qdrant__BaseUrl: http://qdrant:6333/
+  Qdrant__CollectionName: buildingcopilot-knowledge
+  Authentication__Authority: http://localhost:30081/realms/building-copilot
+  Authentication__Issuer: http://localhost:30081/realms/building-copilot
+  Authentication__MetadataAddress: http://keycloak:8080/realms/building-copilot/.well-known/openid-configuration
+  Authentication__BackchannelAuthority: http://keycloak:8080/realms/building-copilot
+  Authentication__Audience: buildingcopilot-api
+  Authentication__RequireHttpsMetadata: "false"
+  AllowedHosts: localhost;127.0.0.1;[::1]
+  KC_DB: postgres
+  KC_DB_URL_HOST: postgres
+  KC_DB_URL_DATABASE: keycloak
+  KC_DB_USERNAME: keycloak
+  KC_HEALTH_ENABLED: "true"
+  KC_METRICS_ENABLED: "true"
+  KC_HOSTNAME: http://localhost:30081
+  KC_HOSTNAME_STRICT: "false"
+  KC_HTTP_ENABLED: "true"
+  POSTGRES_DB: keycloak
+  POSTGRES_USER: keycloak
+  QDRANT__SERVICE__API_KEY: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17.6-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: building-copilot-config
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: building-copilot-secrets
+                  key: POSTGRES_PASSWORD
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.8.1
+          args: ["start", "--http-enabled=true", "--hostname=http://localhost:30081", "--import-realm"]
+          ports:
+            - containerPort: 8080
+            - containerPort: 9000
+          envFrom:
+            - configMapRef:
+                name: building-copilot-config
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: building-copilot-secrets
+                  key: KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: building-copilot-secrets
+                  key: KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: building-copilot-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: keycloak-data
+              mountPath: /opt/keycloak/data
+            - name: keycloak-realm
+              mountPath: /opt/keycloak/data/import/building-copilot-realm.json
+              subPath: building-copilot-realm.json
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            initialDelaySeconds: 50
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 9000
+            initialDelaySeconds: 90
+            periodSeconds: 20
+      volumes:
+        - name: keycloak-realm
+          configMap:
+            name: keycloak-realm
+        - name: keycloak-data
+          persistentVolumeClaim:
+            claimName: keycloak-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-public
+spec:
+  type: NodePort
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30081
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+spec:
+  selector:
+    app: qdrant
+  ports:
+    - name: rest
+      port: 6333
+      targetPort: 6333
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.19.2
+          ports:
+            - containerPort: 6333
+            - containerPort: 6334
+          env:
+            - name: QDRANT__SERVICE__API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: building-copilot-secrets
+                  key: QDRANT_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6333
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: qdrant-data
+              mountPath: /qdrant/storage
+  volumeClaimTemplates:
+    - metadata:
+        name: qdrant-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama
+spec:
+  serviceName: ollama
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      initContainers:
+        - name: pull-models
+          image: ollama/ollama:0.40.6
+          env:
+            - name: OLLAMA_HOST
+              value: http://127.0.0.1:11434
+          command:
+            - sh
+            - -c
+            - |
+              ollama serve >/tmp/ollama-init.log 2>&1 &
+              server_pid=$!
+              until ollama list >/dev/null 2>&1; do sleep 2; done
+              ollama pull llama3.2:3b
+              ollama pull nomic-embed-text
+              kill "$server_pid"
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.40.6
+          ports:
+            - containerPort: 11434
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+  volumeClaimTemplates:
+    - metadata:
+        name: ollama-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 15Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: building-copilot-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: building-copilot-config
+          env:
+            - name: Qdrant__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: building-copilot-secrets
+                  key: QDRANT_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  type: NodePort
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: building-copilot-web:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi

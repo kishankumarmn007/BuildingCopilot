@@ -1,0 +1,134 @@
+name: building-copilot
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Copy .env.example to .env and configure secrets}
+      POSTGRES_USER: ${POSTGRES_USER:?Configure POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [backend]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    restart: unless-stopped
+    command: ["start", "--http-enabled=true", "--hostname=http://localhost:8081", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_DATABASE: ${POSTGRES_DB:?Configure .env}
+      KC_DB_USERNAME: ${POSTGRES_USER:?Configure .env}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?Configure .env}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?Configure .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?Configure .env}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - ./deploy/keycloak/realm.json:/opt/keycloak/data/import/building-copilot-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [frontend, backend]
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?Configure QDRANT_API_KEY in .env}
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "127.0.0.1:6333:6333"
+    networks: [backend]
+
+  ollama:
+    image: ollama/ollama:0.40.6
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    networks: [backend]
+
+  ollama-models:
+    image: ollama/ollama:0.40.6
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull llama3.2:3b && ollama pull nomic-embed-text"]
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks: [backend]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: building-copilot-api:local
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: 8080
+      Ollama__BaseUrl: http://ollama:11434/
+      Qdrant__BaseUrl: http://qdrant:6333/
+      Qdrant__ApiKey: ${QDRANT_API_KEY:?Configure QDRANT_API_KEY in .env}
+      Authentication__Authority: http://localhost:8081/realms/building-copilot
+      Authentication__Issuer: http://localhost:8081/realms/building-copilot
+      Authentication__BackchannelAuthority: http://keycloak:8080/realms/building-copilot
+      Authentication__Audience: buildingcopilot-api
+      Authentication__RequireHttpsMetadata: "false"
+      AllowedHosts: localhost;127.0.0.1;[::1]
+    depends_on:
+      qdrant:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      ollama-models:
+        condition: service_completed_successfully
+    networks: [frontend, backend]
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_OIDC_AUTHORITY: http://localhost:8081/realms/building-copilot
+    image: building-copilot-web:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:8080"
+    depends_on:
+      api:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    networks: [frontend, backend]
+
+networks:
+  frontend:
+  backend:
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  ollama-data:

@@ -11,6 +11,38 @@ namespace BuildingCopilot.IntegrationTests;
 public sealed class ApiIntegrationTests
 {
     [Fact]
+    public async Task ProtectedRestAndMcpRoutes_RejectAnonymousRequests()
+    {
+        using var factory = new TestApplicationFactory { AuthenticateRequests = false };
+        using var client = factory.CreateClient();
+
+        var telemetry = await client.GetAsync("/api/rooms/ROOM-101/telemetry");
+        var rag = await client.PostAsJsonAsync("/api/rag/ask", new { question = "hello" });
+        using var mcpRequest = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        {
+            Content = JsonContent.Create(new { jsonrpc = "2.0", id = 1, method = "tools/list", @params = new { } })
+        };
+        mcpRequest.Headers.Accept.ParseAdd("application/json");
+        mcpRequest.Headers.Accept.ParseAdd("text/event-stream");
+        var mcp = await client.SendAsync(mcpRequest);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, telemetry.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, rag.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, mcp.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProtectedApi_RejectsAuthenticatedUsersWithoutBuildingRole()
+    {
+        using var factory = new TestApplicationFactory { TestRoles = [] };
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/rooms/ROOM-101/telemetry");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Health_ReturnsSuccess()
     {
         using var factory = new TestApplicationFactory();
